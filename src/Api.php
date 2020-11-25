@@ -298,7 +298,8 @@ class Api
                     'track_number' => $track['trackNumber'],
                     'duration' => $track['duration']['totalMilliseconds'],
                     'url' => 'https://open.spotify.com/track/'.$id,
-                    'album_id' => $albumId
+                    'album_id' => $albumId,
+                    'artists' => $track['artists']['items'][0]['profile']['name']
                 ];
             }
             $data['items'] = $items;
