@@ -11,6 +11,8 @@ class Api
 
     protected $_client;
 
+    private $_errmsg;
+
     static $cookiefile = __DIR__ . '/db/cookies';
 
     public function __construct($proxy = '')
@@ -29,6 +31,10 @@ class Api
         $this->_client = new Client($config);
     }
 
+    /**
+     * 获取token
+     * @return string
+     */
     private function _getToken()
     {
         $keyName = 'accessToken';
@@ -39,17 +45,17 @@ class Api
                 return $result['token'];
             }
         }
+
         $url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player";
-        try {
-            $response = $this->_client->get($url);
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            return $this->_error('get token failed, [' . $response->getStatusCode() . ']' . $e->getMessage(), false);
+        $result = $this->_sendRequest($url, false);
+        if ($result === false || !isset($result['accessToken'])) {
+            return null;
         }
-        $result = $response->getBody()->getContents();
-        $result = json_decode($result, true);
+
         $token = $result['accessToken'];
         $expires = floor($result['accessTokenExpirationTimestampMs'] / 1000);
         Storage::init()->set('spotify', $keyName, ['token' => $token, 'expires' => $expires]);
+
         return $token;
     }
 
@@ -74,17 +80,12 @@ class Api
             ])
         ];
         $url .= '?' . http_build_query($param);
-        try {
-            $response = $this->_client->get($url, [
-                'headers' => [
-                    'authorization' => 'Bearer ' . $this->_getToken()
-                ]
-            ]);
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            return $this->_error('get singer info failed, [' . $e->getCode() . '] ' . $e->getMessage());
+
+        $result = $this->_sendRequest($url);
+        if ($result === false) {
+            return $this->_error();
         }
-        $result = $response->getBody()->getContents();
-        $result = json_decode($result, true);
+
         $data = [];
         if (!empty($result['data']['artist'])) {
             $result = $result['data']['artist'];
@@ -99,6 +100,7 @@ class Api
                 'url' => $result['sharingInfo']['shareUrl']
             ];
         }
+
         return $this->_success($data);
     }
 
@@ -123,17 +125,12 @@ class Api
             ])
         ];
         $url .= '?' . http_build_query($param);
-        try {
-            $response = $this->_client->get($url, [
-                'headers' => [
-                    'authorization' => 'Bearer ' . $this->_getToken()
-                ]
-            ]);
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            return $this->_error('get singer albums failed, [' . $e->getCode() . '] ' . $e->getMessage());
+
+        $result = $this->_sendRequest($url);
+        if ($result === false) {
+            return $this->_error();
         }
-        $result = $response->getBody()->getContents();
-        $result = json_decode($result, true);
+
         $data = [];
         if (!empty($result['data']['artist']['discography'])) {
             $result = $result['data']['artist']['discography'];
@@ -182,6 +179,7 @@ class Api
             ];
             $data['total_num'] = $data['albums_num'] + $data['singles_num'] + $data['compilations_num'];
         }
+
         return $this->_success($data);
     }
 
@@ -206,17 +204,12 @@ class Api
             ])
         ];
         $url .= '?' . http_build_query($param);
-        try {
-            $response = $this->_client->get($url, [
-                'headers' => [
-                    'authorization' => 'Bearer ' . $this->_getToken()
-                ]
-            ]);
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            return $this->_error('get album info failed, [' . $e->getCode() . '] ' . $e->getMessage());
+
+        $result = $this->_sendRequest($url);
+        if ($result === false) {
+            return $this->_error();
         }
-        $result = $response->getBody()->getContents();
-        $result = json_decode($result, true);
+
         $data = [];
         if (!empty($result['data']['album'])) {
             $album = $result['data']['album'];
@@ -244,6 +237,7 @@ class Api
                 'url' => $album['sharingInfo']['shareUrl']
             ];
         }
+
         return $this->_success($data);
     }
 
@@ -270,17 +264,12 @@ class Api
             ])
         ];
         $url .= '?' . http_build_query($param);
-        try {
-            $response = $this->_client->get($url, [
-                'headers' => [
-                    'authorization' => 'Bearer ' . $this->_getToken()
-                ]
-            ]);
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            return $this->_error('get album songs failed, [' . $e->getCode() . '] ' . $e->getMessage());
+        
+        $result = $this->_sendRequest($url);
+        if ($result === false) {
+            return $this->_error();
         }
-        $result = $response->getBody()->getContents();
-        $result = json_decode($result, true);
+
         $data = ['total_count' => 0, 'items' => []];
         if (!empty($result['data']['album']['tracks'])) {
             $result = $result['data']['album']['tracks'];
@@ -304,6 +293,7 @@ class Api
             }
             $data['items'] = $items;
         }
+
         return $this->_success($data);
     }
 
@@ -314,6 +304,17 @@ class Api
      */
     public function getPlaylist($playlistId)
     {
+        $url = "https://spclient.wg.spotify.com/playlist/v2/playlist/{$playlistId}/metadata";
+        $result = $this->_sendRequest($url);
+        if ($result === false) {
+            return $this->_error();
+        }
+
+        $updateAt = '';
+        if (!empty($result['timestamp'])) {
+            $updateAt = date('Y-m-d H:i:s', $result['timestamp']/1000);
+        }
+
         $url = "https://api.spotify.com/v1/playlists/{$playlistId}";
         $param = [
             'fields' => 'description,followers(total),images,name,tracks(items(track.id,track.name,track.artists,track.popularity,track.external_urls),total),external_urls',
@@ -321,21 +322,12 @@ class Api
             'market' => 'US'
         ];
         $url .= '?'.http_build_query($param);
-        $url2 = "https://spclient.wg.spotify.com/playlist/v2/playlist/{$playlistId}/metadata";
-        try {
-            $option = [
-                'headers' => [
-                    'authorization' => 'Bearer ' . $this->_getToken(),
-                    'accept' => 'application/json'
-                ]
-            ];
-            $response = $this->_client->get($url, $option);
-            $response2 = $this->_client->get($url2, $option);
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            return $this->_error('get playlist failed, [' . $e->getCode() . '] ' . $e->getMessage());
+
+        $result = $this->_sendRequest($url);
+        if ($result === false) {
+            return $this->_error();
         }
-        $result = $response->getBody()->getContents();
-        $result = json_decode($result, true);
+
         $tracks = [];
         foreach ($result['tracks']['items'] as $item) {
             $item = $item['track'];
@@ -362,14 +354,31 @@ class Api
             'followers' => $result['followers']['total'], 
             'tracks' => $tracks,
             'url' => 'https://open.spotify.com/playlist/'.$playlistId,
-            'update_at' => ''
+            'update_at' => $updateAt
         ];
-        $result = $response2->getBody()->getContents();
-        $result = json_decode($result, true);
-        if (!empty($result['timestamp'])) {
-            $data['update_at'] = date('Y-m-d H:i:s', $result['timestamp']/1000);
-        }
+
         return $this->_success($data);
+    }
+
+    private function _sendRequest($url, $isAuth = true)
+    {
+        $options = [];
+        if ($isAuth) {
+            $options['headers'] = ['authorization' => 'Bearer ' . $this->_getToken(), 'accept' => 'application/json'];
+        }
+
+        try {
+            $response = $this->_client->get($url, $options);
+        } catch (\GuzzleHttp\Exception\ClientException $e) {
+            return $this->_error(__METHOD__. ', client error, [' . $e->getCode() . '] ' . $e->getMessage(), false);
+        } catch(\GuzzleHttp\Exception\ServerException $e) {
+            return $this->_error(__METHOD__. ', server error, [' . $e->getCode() . '] ' . $e->getMessage(), false);
+        } catch (\Exception $e) {
+            return $this->_error(__METHOD__. ', other error, [' . $e->getCode() . '] ' . $e->getMessage(), false);
+        }
+
+        $result = $response->getBody()->getContents();
+        return json_decode($result, true);
     }
 
     private function _success($data = [])
@@ -377,8 +386,12 @@ class Api
         return ['ret' => true, 'data' => $data, 'msg' => ''];
     }
 
-    private function _error($msg = '')
+    private function _error($msg = '', $isArray = true)
     {
-        return ['ret' => false, 'data' => null, 'msg' => $msg];
+        if ($isArray) {
+            return ['ret' => false, 'data' => null, 'msg' => $msg ?: $this->_errmsg];
+        }
+        $this->_errmsg = $msg;
+        return false;
     }
 }
